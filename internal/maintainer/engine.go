@@ -161,8 +161,12 @@ func (e *Engine) execute(ctx context.Context, t Task, approved *Run, lock *os.Fi
 	timeout, _ := time.ParseDuration(t.Timeout)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req := Request{Task: t, Dir: e.Store.RunDir(r.ID), ApprovedPlan: plan, Lock: lock}
-	result, runErr := e.Driver.Execute(runCtx, req)
+	req := Request{Task: t, Dir: e.Store.RunDir(r.ID), StateRoot: e.Store.Root, ApprovedPlan: plan, Lock: lock}
+	driver := e.Driver
+	if driver == nil {
+		driver = Drivers{}
+	}
+	result, runErr := driver.Execute(runCtx, req)
 	if runErr == nil {
 		runErr = ValidateResult(result, req)
 	}
@@ -201,6 +205,17 @@ func (e *Engine) execute(ctx context.Context, t Task, approved *Run, lock *os.Fi
 		}
 	}
 	return r, runErr
+}
+
+func (e *Engine) SetPaused(name string, paused bool) error {
+	return e.locked(func(_ *os.File) error {
+		t, err := e.Store.Task(name)
+		if err != nil {
+			return err
+		}
+		t.Paused = paused
+		return e.Store.SaveTask(t, true)
+	})
 }
 
 // Tick records initial schedules without running newly discovered tasks. Once

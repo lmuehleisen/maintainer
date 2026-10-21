@@ -17,14 +17,17 @@ import (
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/term"
+	"github.com/lmuehleisen/maintainer/internal/dashboard"
 	"github.com/lmuehleisen/maintainer/internal/maintainer"
 )
 
-const version = "0.1.0-dev"
+const version = "0.2.0-dev"
 const usage = `maintain — recurring responsibilities, explicit authority
 
 Usage: maintain [--home DIR] [--json] COMMAND [OPTIONS]
 
+  dashboard              Browse tasks, runs, and approvals in a terminal dashboard
   add                    Create a task with a short form
   add --file task.md     Import a Markdown task
   list                   List tasks (edit their Markdown files directly)
@@ -42,7 +45,7 @@ Usage: maintain [--home DIR] [--json] COMMAND [OPTIONS]
   notify RUN             Retry a failed webhook delivery
   version                Print version
 
-Add flags: --name --target --objective --schedule --authority --timeout --model
+Add flags: --name --target --objective --schedule --authority --driver --timeout --model
            --network --webhook-env (or use --file)
 State: MAINTAINER_HOME, or ~/.local/state/maintainer (XDG_STATE_HOME respected).
 Schedules default to UTC; use CRON_TZ=America/New_York for local calendar time.
@@ -104,8 +107,16 @@ func cli(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	engine := &maintainer.Engine{Store: store, Driver: maintainer.Codex{}}
+	engine := &maintainer.Engine{Store: store}
 	switch command {
+	case "dashboard", "dash":
+		if len(args) != 0 || *asJSON {
+			return fmt.Errorf("dashboard takes no arguments or --json; use maintain --json status for scripts")
+		}
+		if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
+			return fmt.Errorf("dashboard requires a terminal; use maintain --json status for scripts")
+		}
+		return dashboard.Run(ctx, store, engine)
 	case "add":
 		return add(store, args, *asJSON)
 	case "list", "status":
@@ -231,11 +242,16 @@ func cli(ctx context.Context, args []string) error {
 			if err = t.CheckTarget(store.Root); err != nil {
 				return err
 			}
-			req := maintainer.Request{Task: t, Dir: filepath.Join(store.Root, "runs", "<run-id>")}
+			req := maintainer.Request{Task: t, Dir: filepath.Join(store.Root, "runs", "<run-id>"), StateRoot: store.Root}
+			binary, args, err := maintainer.Invocation(req)
+			if err != nil {
+				return err
+			}
 			return output(struct {
+				Binary string   `json:"binary"`
 				Args   []string `json:"args"`
 				Prompt string   `json:"prompt"`
-			}{maintainer.CodexArgs(req), maintainer.Prompt(req)})
+			}{binary, args, maintainer.Prompt(req)})
 		}
 		r, err := engine.Run(ctx, name)
 		printRun(r, *asJSON)
@@ -341,17 +357,7 @@ func cli(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		lock, err := store.Lock()
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
-		t, err := store.Task(name)
-		if err != nil {
-			return err
-		}
-		t.Paused = command == "pause"
-		return store.SaveTask(t, true)
+		return engine.SetPaused(name, command == "pause")
 	default:
 		return fmt.Errorf("unknown command %q; run maintain help", command)
 	}
@@ -399,7 +405,8 @@ func add(store *maintainer.Store, args []string, asJSON bool) error {
 	schedule := fs.String("schedule", "@weekly", "cron or @every interval")
 	authority := fs.String("authority", "observe", "observe, propose, ask, auto")
 	timeout := fs.String("timeout", "15m", "run timeout")
-	model := fs.String("model", "", "Codex model override")
+	driver := fs.String("driver", "codex", "codex or claude")
+	model := fs.String("model", "", "driver model override")
 	network := fs.Bool("network", false, "allow network during authorized writes")
 	webhook := fs.String("webhook-env", "", "environment variable containing HTTPS webhook")
 	if err := fs.Parse(args); err != nil {
@@ -432,6 +439,7 @@ func add(store *maintainer.Store, args []string, asJSON bool) error {
 			form := huh.NewForm(huh.NewGroup(
 				huh.NewInput().Title("Name").Placeholder("weekly-dependencies").Value(name),
 				huh.NewInput().Title("Target directory").Value(target),
+				huh.NewSelect[string]().Title("Agent").Options(huh.NewOption("Codex", "codex"), huh.NewOption("Claude Code", "claude")).Value(driver),
 				huh.NewInput().Title("Schedule").Description("@weekly, @every 24h, or CRON_TZ=America/New_York 0 9 * * 1").Value(schedule),
 				huh.NewSelect[string]().Title("Authority").Options(huh.NewOption("Observe — inspect and report", "observe"), huh.NewOption("Propose — write a recommendation", "propose"), huh.NewOption("Ask — save a plan for approval", "ask"), huh.NewOption("Auto — write within the target", "auto")).Value(authority),
 				huh.NewText().Title("What condition should stay true?").Value(objective),
@@ -447,7 +455,7 @@ func add(store *maintainer.Store, args []string, asJSON bool) error {
 			}
 			*target = p
 		}
-		task = maintainer.Task{Name: *name, Target: *target, Objective: strings.TrimSpace(*objective), Schedule: *schedule, Authority: *authority, Driver: "codex", Timeout: *timeout, Model: *model, Network: *network, WebhookEnv: *webhook}
+		task = maintainer.Task{Name: *name, Target: *target, Objective: strings.TrimSpace(*objective), Schedule: *schedule, Authority: *authority, Driver: *driver, Timeout: *timeout, Model: *model, Network: *network, WebhookEnv: *webhook}
 	}
 	if err := task.Validate(); err != nil {
 		return err

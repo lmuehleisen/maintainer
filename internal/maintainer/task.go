@@ -75,8 +75,8 @@ func (t Task) Validate() error {
 	if !filepath.IsAbs(t.Target) {
 		return fmt.Errorf("target must be an absolute local directory")
 	}
-	if t.Driver != "codex" {
-		return fmt.Errorf("unsupported driver %q (v0.1 supports codex)", t.Driver)
+	if t.Driver != "codex" && t.Driver != "claude" {
+		return fmt.Errorf("unsupported driver %q (choose codex or claude)", t.Driver)
 	}
 	switch t.Authority {
 	case "observe", "propose", "ask", "auto":
@@ -147,6 +147,9 @@ func (t Task) CheckTarget(stateRoot string) error {
 	userHome, _ := os.UserHomeDir()
 	resolvedHome, _ := filepath.EvalSymlinks(userHome)
 	for _, start := range []string{filepath.Clean(t.Target), path} {
+		if t.Driver != "codex" {
+			break
+		}
 		for dir := start; ; dir = filepath.Dir(dir) {
 			// This location is user configuration, already suppressed by the
 			// adapter, rather than a project config inherited from an ancestor.

@@ -5,14 +5,16 @@ harness owns reasoning, model communication, authentication, and tools.
 
 ```mermaid
 flowchart LR
-    CLI[CLI / Charm forms] --> Tasks[Markdown tasks]
+    CLI[CLI / Charm forms / Bubble Tea dashboard] --> Tasks[Markdown tasks]
     OS[launchd / systemd / cron] --> Tick[maintain tick]
     Tasks --> Runner[Runner + scheduler]
     Tick --> Runner
     Runner --> History[Atomic local run records]
     Runner --> Adapter[Driver interface]
     Adapter --> Codex[Codex exec + sandbox]
+    Adapter --> Claude[Claude print + sandbox]
     Codex --> Target[Local target]
+    Claude --> Target
     History --> Review[Inspect / approve / reject]
     Review --> Runner
     Runner --> Notify[Exception webhook]
@@ -24,7 +26,9 @@ flowchart LR
 - `internal/maintainer/task.go`: strict Markdown/YAML definitions and schedule parsing.
 - `store.go`: atomic JSON persistence, task files, process lock, interrupted recovery.
 - `engine.go`: scheduling, transitions, approval checks, notification delivery.
-- `driver.go`: the small adapter interface and Codex process/result handling.
+- `driver.go`: adapter dispatch and Codex process/result handling.
+- `claude.go`: isolated Claude print invocation, version gate, and structured results.
+- `internal/dashboard`: read-only snapshots and confirmed actions through the same engine.
 
 These are deliberately files in one cohesive package, rather than a framework of
 public interfaces. The driver is injectable to test the lifecycle without a model.
@@ -83,7 +87,9 @@ already-applied change.
 
 ## Permission boundaries
 
-The initial adapter uses Codex's existing OS sandbox, not a custom isolation layer.
+Both adapters use their harness's existing sandbox. They do not implement a custom isolation layer.
+
+### Codex
 
 - Observe/propose/ask inspection: `read-only`, no agent shell network access.
 - Auto/approved execution: `workspace-write`; network disabled unless `network: true`.
@@ -92,15 +98,41 @@ The initial adapter uses Codex's existing OS sandbox, not a custom isolation lay
 - User config and execpolicy rules are ignored. Targets with project
   `.codex/config.toml` in their ancestor chain are rejected because that config can
   add tools outside the shell sandbox. Web search is disabled.
-- The process receives only a small environment allowlist. Agent shells do not
-  inherit service tokens, webhook URLs, or login-shell configuration.
+
+### Claude Code
+
+- Requires version 2.1.304+ for the isolation flags used by this adapter. The version
+  probe is recorded; older or unrecognized versions fail before execution.
+- `--restricted` confines native file tools to the working directory; `--safe-mode`
+  disables customizations. Settings sources, hooks, MCP servers, browser integration,
+  and slash commands are disabled. `--tools` explicitly restores only Read/Glob/Grep/Bash,
+  with Edit/Write added for auto or approved execution.
+- Observe/propose/ask inspection denies Bash writes from filesystem root and omits
+  native write tools. Auto/approved execution retains the default target and per-user
+  temporary-directory write permissions, with the state directory explicitly denied.
+- The OS sandbox is enabled with `failIfUnavailable: true`, no unsandboxed fallback,
+  and no excluded commands. Linux requires bubblewrap and socat. Network is denied
+  unless a write phase explicitly has `network: true`; local listeners and arbitrary
+  Unix sockets remain disabled.
+- `dontAsk` and `--permission-prompts none` make execution unattended; these are not
+  the security boundary. Restrictions come from the native-tool policy and OS sandbox.
+- Streaming events are recorded. A successful, non-error result event with valid
+  `structured_output` is mandatory. Missing output, authentication errors, and invalid
+  authority/outcome combinations fail even if the process exits zero.
+- Claude also saves `settings.json` and `driver-version.txt` with each run.
+
+### Shared limits
+
+- The process receives only a small environment allowlist, including the harness's
+  config-directory override. Arbitrary service tokens, API keys, and webhook secrets
+  are not forwarded. Use the harness's saved authentication.
 - State and targets may not contain one another; workspace writes must not reach
   Maintainer's approval ledger. Symlink-resolved paths are checked too.
 
-This is a **local write sandbox**, not complete confidentiality isolation: Codex
-may read files allowed by its own sandbox policy, and the model receives context
+This is a **local write sandbox**, not complete confidentiality isolation: agent shells
+may read files allowed by the selected sandbox policy, and the model receives context
 from the target. The agent harness itself is trusted and can write its own auth,
-logs, and output artifacts. Installed system/managed Codex policies are also trusted;
+logs, and output artifacts. Installed system/managed harness policies are also trusted;
 administrative policies can take precedence over CLI settings. Review those policies
 on managed machines. Other software running as the same user can alter the ledger.
 
@@ -122,11 +154,15 @@ maintenance needs a future adapter with narrowly scoped remote access.
 2. Add isolated Git worktrees for proposed patches, with diff-based application.
 3. Add scoped remote inspection/action adapters before live server upgrades.
 4. Add notification retry/retention policies and more drivers when needed.
-5. Add a Bubble Tea history/review view if plain commands become awkward.
+5. Improve dashboard filtering and large-history pagination as usage grows.
 
 Primary documentation consulted:
 [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Codex CLI implementation](https://github.com/openai/codex/blob/main/codex-rs/exec/src/cli.rs),
 [Huh v2 migration](https://github.com/charmbracelet/huh/blob/main/UPGRADE_GUIDE_V2.md),
 [robfig/cron](https://github.com/robfig/cron),
-[Go exec](https://pkg.go.dev/os/exec).
+[Go exec](https://pkg.go.dev/os/exec),
+[Bubble Tea v2 migration](https://github.com/charmbracelet/bubbletea/blob/main/UPGRADE_GUIDE_V2.md),
+[Claude CLI](https://code.claude.com/docs/en/cli-reference),
+[Claude sandbox](https://code.claude.com/docs/en/sandboxing),
+[Claude settings](https://code.claude.com/docs/en/settings-reference).

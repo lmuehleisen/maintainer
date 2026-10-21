@@ -7,12 +7,14 @@ coding agent. Write the desired condition in plain text, choose a schedule and
 authority, and inspect a durable history of what happened.
 
 The command is `maintain`. This is an early working version, with Codex as its
-first driver and Charm forms for interactive setup.
+default driver, an optional Claude Code driver, Charm forms, and a Bubble Tea dashboard.
 
 ## Quick start
 
-Requires macOS or Linux, Go 1.26+, Git, and an authenticated Codex CLI supporting
-`exec --ignore-user-config --ignore-rules` (tested with 0.163.0).
+Requires macOS or Linux, Go 1.26+, Git, and an authenticated agent CLI:
+Codex supporting `exec --ignore-user-config --ignore-rules` (tested with 0.163.0),
+or Claude Code 2.1.304+ (`claude auth login`). Claude sandboxing on Linux also
+requires `bubblewrap` and `socat`.
 
 ```sh
 go install github.com/lmuehleisen/maintainer/cmd/maintain@latest
@@ -22,6 +24,7 @@ maintain run --dry-run weekly-dependencies
 maintain run weekly-dependencies
 maintain logs weekly-dependencies
 maintain status
+maintain dashboard
 ```
 
 Go installs to `$(go env GOPATH)/bin` unless `GOBIN` is set; add that directory to
@@ -29,6 +32,47 @@ your PATH if needed. To build a checkout: `go build -o bin/maintain ./cmd/mainta
 
 No timer is installed by these commands. See [scheduling](docs/scheduling.md)
 to arrange automatic execution.
+
+## Dashboard
+
+`maintain dashboard` (or `maintain dash`) opens a full-screen terminal view of tasks,
+health, schedules, and run history. It refreshes every two seconds. At 95+ columns,
+the selected task has a details pane. Opening the dashboard does not execute tasks.
+
+| Key | Action |
+| --- | --- |
+| ↑/↓ or j/k | Select task/run; scroll an inspected run |
+| Enter / Esc | Open history or inspect a run / go back |
+| r | Run the selected task after confirmation |
+| p | Pause or resume after confirmation |
+| a / x | Approve or reject an inspected pending plan after confirmation |
+| Page Up / Page Down | Scroll a long result or plan |
+| Ctrl+R | Refresh now |
+| q / Ctrl+C | Quit; confirm cancellation if this dashboard is executing work |
+
+The existing `list`, `status`, `logs`, `inspect`, `approve`, and `reject` commands
+remain available for scripts and noninteractive use.
+
+## Agent drivers
+
+Choose an agent per task with `maintain add --driver claude` or `driver: claude`
+in its Markdown frontmatter. The default remains `codex`; a single `tick` can run
+both. Optional `model:` is passed to the selected harness. Use `run --dry-run NAME`
+to inspect the actual executable, arguments, policy, and prompt.
+
+Claude uses `claude -p` with a JSON schema and validates the final structured result.
+It uses the CLI's saved login, respecting `CLAUDE_CONFIG_DIR`; API-key environment
+variables and custom authentication helpers are not forwarded by this version.
+It disables project/user customizations, hooks, MCP servers, and permission prompts.
+Read-only phases omit native write tools and deny Bash filesystem writes. Write
+phases allow native edits within the target and sandboxed Bash writes in the target
+and Claude's temporary directory, while explicitly protecting Maintainer's state.
+A missing sandbox fails the run instead of permitting unrestricted commands.
+See [permission boundaries](docs/architecture.md#permission-boundaries) for details.
+
+If Claude reports authentication failure, check `claude auth status` in the same
+shell/configuration directory. An open app session does not prove that a fresh CLI
+process can use its login. Failed runs preserve both `events.jsonl` and `stderr.log`.
 
 ## A task is a Markdown file
 
@@ -50,7 +94,7 @@ failures. Do not deploy, publish, or push changes.
 
 Import it with `maintain add --file task.md`, or use the interactive form.
 Noninteractive creation also supports `--name`, `--target`, `--objective`,
-`--schedule`, `--authority`, `--timeout`, `--model`, `--network`, and `--webhook-env`.
+`--schedule`, `--driver`, `--authority`, `--timeout`, `--model`, `--network`, and `--webhook-env`.
 
 Schedules accept five-field cron, `@daily`, `@weekly`, or intervals such as
 `@every 24h` / `@every 168h`. Intervals must be at least one minute. Calendar
@@ -85,14 +129,14 @@ block new runs until approved or rejected. A failed approved run consumes its
 approval: rerun the inspection to get a fresh proposal. Non-Git or dirty targets
 can receive written recommendations, but cannot use CLI execution approval yet.
 
-The Codex sandbox enforces the local write boundary. The approved plan and
+The selected harness enforces the local write boundary. The approved plan and
 objective remain instructions to the agent, **not a command-level security
 policy**. Read [permission boundaries](docs/architecture.md#permission-boundaries)
 before using write authority or network access.
 
 ## Results and notifications
 
-Each run saves its task snapshot, prompt, JSON result, Codex event stream, stderr,
+Each run saves its task snapshot, prompt, JSON result, agent event stream, stderr,
 and execution metadata. `inspect RUN_ID` shows the artifact directory.
 
 Outcomes: `healthy`, `maintained`, `action_required`, `approval_required`, `failed`.
@@ -118,14 +162,14 @@ action/approval-required results are successful checks with an outstanding decis
 
 ## Current scope
 
-- macOS and Linux; one serial worker per state directory, one Codex adapter.
+- macOS and Linux; one serial worker per state directory, Codex and Claude Code adapters.
 - Local targets; no daemon, database service, remote API, or hosted account.
 - Structured results, crash recovery, scheduling, approval, and optional webhooks.
-- Huh v2 forms and Lip Gloss v2 output; no separate full-screen dashboard yet.
+- Huh v2 forms, Lip Gloss v2 output, and a Bubble Tea v2 dashboard.
 
 The server-maintenance example is intentionally a **local report review** in this
 version. Live SSH checks/updates, arbitrary command allowlists, isolated worktrees,
-PR creation, additional agents, automatic webhook retries, and log retention are
+PR creation, additional drivers, automatic webhook retries, and log retention are
 future work. No real servers or other projects are modified during development.
 
 See [architecture](docs/architecture.md), [scheduling](docs/scheduling.md),

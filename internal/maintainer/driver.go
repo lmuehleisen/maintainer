@@ -19,6 +19,7 @@ const ResultSchema = `{"type":"object","additionalProperties":false,"required":[
 type Request struct {
 	Task         Task
 	Dir          string
+	StateRoot    string
 	ApprovedPlan string
 	Lock         *os.File
 }
@@ -26,6 +27,39 @@ type Driver interface {
 	Execute(context.Context, Request) (Result, error)
 }
 type Codex struct{ Binary string }
+
+// Drivers dispatches each task independently, including mixed-driver ticks.
+type Drivers struct{ Codex, Claude Driver }
+
+func (d Drivers) Execute(ctx context.Context, req Request) (Result, error) {
+	var driver Driver
+	switch req.Task.Driver {
+	case "codex":
+		driver = d.Codex
+		if driver == nil {
+			driver = Codex{}
+		}
+	case "claude":
+		driver = d.Claude
+		if driver == nil {
+			driver = Claude{}
+		}
+	default:
+		return Result{}, fmt.Errorf("unknown driver %q", req.Task.Driver)
+	}
+	return driver.Execute(ctx, req)
+}
+
+func Invocation(req Request) (string, []string, error) {
+	switch req.Task.Driver {
+	case "codex":
+		return "codex", CodexArgs(req), nil
+	case "claude":
+		return "claude", ClaudeArgs(req), nil
+	default:
+		return "", nil, fmt.Errorf("unknown driver %q", req.Task.Driver)
+	}
+}
 
 func Prompt(req Request) string {
 	authority := "Inspect and report only. Do not make changes."
@@ -67,11 +101,11 @@ func CodexArgs(req Request) []string {
 	return append(args, "-")
 }
 
-// Small environment: authentication remains Codex's responsibility. Never forward
+// Small environment: authentication remains the harness's responsibility. Never forward
 // arbitrary service tokens or notification secrets to the agent process.
 func agentEnv() []string {
 	env := []string{}
-	for _, key := range []string{"HOME", "PATH", "CODEX_HOME", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
+	for _, key := range []string{"HOME", "PATH", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR"} {
 		if v, ok := os.LookupEnv(key); ok {
 			env = append(env, key+"="+v)
 		}
