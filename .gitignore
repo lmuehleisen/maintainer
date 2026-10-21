@@ -1,0 +1,5 @@
+/bin/
+/.maintainer/
+*.test
+coverage.out
+.DS_Store
