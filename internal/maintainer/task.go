@@ -76,7 +76,7 @@ func (t Task) Validate() error {
 		return fmt.Errorf("target must be an absolute local directory")
 	}
 	if t.Driver != "codex" && t.Driver != "claude" {
-		return fmt.Errorf("unsupported driver %q (choose codex or claude)", t.Driver)
+		return fmt.Errorf("unsupported driver %q (choose codex; Claude is inactive)", t.Driver)
 	}
 	switch t.Authority {
 	case "observe", "propose", "ask", "auto":

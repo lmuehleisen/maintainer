@@ -12,9 +12,7 @@ flowchart LR
     Runner --> History[Atomic local run records]
     Runner --> Adapter[Driver interface]
     Adapter --> Codex[Codex exec + sandbox]
-    Adapter --> Claude[Claude print + sandbox]
     Codex --> Target[Local target]
-    Claude --> Target
     History --> Review[Inspect / approve / reject]
     Review --> Runner
     Runner --> Notify[Exception webhook]
@@ -87,7 +85,8 @@ already-applied change.
 
 ## Permission boundaries
 
-Both adapters use their harness's existing sandbox. They do not implement a custom isolation layer.
+The active Codex adapter uses its harness's existing sandbox. The retained Claude
+adapter is inactive pending authentication and live permission-boundary verification.
 
 ### Codex
 
@@ -99,7 +98,11 @@ Both adapters use their harness's existing sandbox. They do not implement a cust
   `.codex/config.toml` in their ancestor chain are rejected because that config can
   add tools outside the shell sandbox. Web search is disabled.
 
-### Claude Code
+### Claude Code (inactive)
+
+The following describes retained implementation code, not an available driver.
+Creation, dry-run invocation, and dispatch reject Claude before starting a process.
+Existing task definitions remain readable so they can be inspected or paused.
 
 - Requires version 2.1.304+ for the isolation flags used by this adapter. The version
   probe is recorded; older or unrecognized versions fail before execution.

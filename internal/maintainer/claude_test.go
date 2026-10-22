@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestMixedDriverDispatch(t *testing.T) {
+func TestInactiveClaudeDoesNotPreventCodexDispatch(t *testing.T) {
 	e, codex, task, now := fixture(t)
 	claude := &fakeDriver{Result: Result{Outcome: "healthy", Summary: "Claude checked."}}
 	e.Driver = Drivers{Codex: codex, Claude: claude}
@@ -24,15 +24,48 @@ func TestMixedDriverDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	*now = now.Add(2 * time.Hour)
-	if _, err := e.Tick(context.Background()); err != nil {
-		t.Fatal(err)
+	if _, err := e.Tick(context.Background()); err == nil || !strings.Contains(err.Error(), "Claude driver is inactive") {
+		t.Fatalf("expected inactive driver failure: %v", err)
 	}
-	if codex.Calls != 1 || claude.Calls != 1 {
+	if codex.Calls != 1 || claude.Calls != 0 {
 		t.Fatalf("routing: codex=%d claude=%d", codex.Calls, claude.Calls)
+	}
+	if _, err := e.Run(context.Background(), other.Name); err == nil || !strings.Contains(err.Error(), "Claude driver is inactive") {
+		t.Fatalf("manual run should reject inactive driver: %v", err)
+	}
+	if _, _, err := Invocation(Request{Task: other}); err == nil {
+		t.Fatal("dry run exposed inactive invocation")
+	}
+	if claude.Calls != 0 {
+		t.Fatal("inactive driver executed")
+	}
+	// Existing definitions must remain inspectable and manageable.
+	if _, err := e.Store.Tasks(); err != nil {
+		t.Fatal(err)
 	}
 	other.Driver = "unknown"
 	if _, err := (Drivers{}).Execute(context.Background(), Request{Task: other}); err == nil {
 		t.Fatal("unknown driver accepted")
+	}
+}
+
+func TestInactiveClaudeApprovalRemainsUnconsumed(t *testing.T) {
+	e, _, task, now := fixture(t)
+	task.Driver = "claude"
+	task.Authority = "ask"
+	if err := e.Store.SaveTask(task, true); err != nil {
+		t.Fatal(err)
+	}
+	proposal := Run{ID: "claude-proposal", Task: task.Name, Status: "completed", TaskDigest: task.Digest(), Finished: *now, Result: Result{Outcome: "approval_required", Summary: "Needs work", Plan: "Make a change"}}
+	if err := e.Store.SaveRun(proposal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Approve(context.Background(), proposal.ID); err == nil || !strings.Contains(err.Error(), "Claude driver is inactive") {
+		t.Fatalf("expected inactive driver: %v", err)
+	}
+	saved, err := e.Store.Run(proposal.ID)
+	if err != nil || saved.ConsumedBy != "" {
+		t.Fatalf("inactive approval consumed: %+v %v", saved, err)
 	}
 }
 

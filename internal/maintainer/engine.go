@@ -79,6 +79,9 @@ func (e *Engine) Approve(ctx context.Context, id string) (Run, error) {
 		if err != nil {
 			return err
 		}
+		if err := CheckDriverActive(task.Driver); err != nil {
+			return err
+		}
 		if task.Paused || task.Authority != "ask" || task.Digest() != previous.TaskDigest {
 			return fmt.Errorf("task changed or paused; reject this proposal and run again")
 		}

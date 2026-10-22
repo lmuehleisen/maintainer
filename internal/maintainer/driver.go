@@ -28,10 +28,27 @@ type Driver interface {
 }
 type Codex struct{ Binary string }
 
-// Drivers dispatches each task independently, including mixed-driver ticks.
+// CheckDriverActive keeps known-but-inactive task definitions readable while
+// preventing creation, dry-run invocation, and dispatch through public commands.
+func CheckDriverActive(name string) error {
+	switch name {
+	case "codex":
+		return nil
+	case "claude":
+		return fmt.Errorf("Claude driver is inactive pending authentication verification; use driver: codex")
+	default:
+		return fmt.Errorf("unknown driver %q", name)
+	}
+}
+
+// Drivers dispatches active drivers only. Claude's implementation is retained
+// for future reactivation after a real authenticated run has been verified.
 type Drivers struct{ Codex, Claude Driver }
 
 func (d Drivers) Execute(ctx context.Context, req Request) (Result, error) {
+	if err := CheckDriverActive(req.Task.Driver); err != nil {
+		return Result{}, err
+	}
 	var driver Driver
 	switch req.Task.Driver {
 	case "codex":
@@ -51,6 +68,9 @@ func (d Drivers) Execute(ctx context.Context, req Request) (Result, error) {
 }
 
 func Invocation(req Request) (string, []string, error) {
+	if err := CheckDriverActive(req.Task.Driver); err != nil {
+		return "", nil, err
+	}
 	switch req.Task.Driver {
 	case "codex":
 		return "codex", CodexArgs(req), nil

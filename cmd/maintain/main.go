@@ -405,7 +405,7 @@ func add(store *maintainer.Store, args []string, asJSON bool) error {
 	schedule := fs.String("schedule", "@weekly", "cron or @every interval")
 	authority := fs.String("authority", "observe", "observe, propose, ask, auto")
 	timeout := fs.String("timeout", "15m", "run timeout")
-	driver := fs.String("driver", "codex", "codex or claude")
+	driver := fs.String("driver", "codex", "codex (Claude driver is inactive)")
 	model := fs.String("model", "", "driver model override")
 	network := fs.Bool("network", false, "allow network during authorized writes")
 	webhook := fs.String("webhook-env", "", "environment variable containing HTTPS webhook")
@@ -439,7 +439,7 @@ func add(store *maintainer.Store, args []string, asJSON bool) error {
 			form := huh.NewForm(huh.NewGroup(
 				huh.NewInput().Title("Name").Placeholder("weekly-dependencies").Value(name),
 				huh.NewInput().Title("Target directory").Value(target),
-				huh.NewSelect[string]().Title("Agent").Options(huh.NewOption("Codex", "codex"), huh.NewOption("Claude Code", "claude")).Value(driver),
+				huh.NewSelect[string]().Title("Agent").Options(huh.NewOption("Codex", "codex")).Value(driver),
 				huh.NewInput().Title("Schedule").Description("@weekly, @every 24h, or CRON_TZ=America/New_York 0 9 * * 1").Value(schedule),
 				huh.NewSelect[string]().Title("Authority").Options(huh.NewOption("Observe — inspect and report", "observe"), huh.NewOption("Propose — write a recommendation", "propose"), huh.NewOption("Ask — save a plan for approval", "ask"), huh.NewOption("Auto — write within the target", "auto")).Value(authority),
 				huh.NewText().Title("What condition should stay true?").Value(objective),
@@ -458,6 +458,9 @@ func add(store *maintainer.Store, args []string, asJSON bool) error {
 		task = maintainer.Task{Name: *name, Target: *target, Objective: strings.TrimSpace(*objective), Schedule: *schedule, Authority: *authority, Driver: *driver, Timeout: *timeout, Model: *model, Network: *network, WebhookEnv: *webhook}
 	}
 	if err := task.Validate(); err != nil {
+		return err
+	}
+	if err := maintainer.CheckDriverActive(task.Driver); err != nil {
 		return err
 	}
 	if err := task.CheckTarget(store.Root); err != nil {

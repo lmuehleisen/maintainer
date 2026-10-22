@@ -7,14 +7,13 @@ coding agent. Write the desired condition in plain text, choose a schedule and
 authority, and inspect a durable history of what happened.
 
 The command is `maintain`. This is an early working version, with Codex as its
-default driver, an optional Claude Code driver, Charm forms, and a Bubble Tea dashboard.
+active driver, Charm forms, and a Bubble Tea dashboard. Claude Code driver code is
+retained but inactive pending authentication verification.
 
 ## Quick start
 
-Requires macOS or Linux, Go 1.26+, Git, and an authenticated agent CLI:
-Codex supporting `exec --ignore-user-config --ignore-rules` (tested with 0.163.0),
-or Claude Code 2.1.304+ (`claude auth login`). Claude sandboxing on Linux also
-requires `bubblewrap` and `socat`.
+Requires macOS or Linux, Go 1.26+, Git, and an authenticated Codex CLI supporting
+`exec --ignore-user-config --ignore-rules` (tested with 0.163.0).
 
 ```sh
 go install github.com/lmuehleisen/maintainer/cmd/maintain@latest
@@ -55,24 +54,19 @@ remain available for scripts and noninteractive use.
 
 ## Agent drivers
 
-Choose an agent per task with `maintain add --driver claude` or `driver: claude`
-in its Markdown frontmatter. The default remains `codex`; a single `tick` can run
-both. Optional `model:` is passed to the selected harness. Use `run --dry-run NAME`
-to inspect the actual executable, arguments, policy, and prompt.
+Codex is the only active driver. Use `driver: codex` (the default). Optional
+`model:` is passed to Codex. `run --dry-run NAME` shows its invocation and prompt.
 
-Claude uses `claude -p` with a JSON schema and validates the final structured result.
-It uses the CLI's saved login, respecting `CLAUDE_CONFIG_DIR`; API-key environment
-variables and custom authentication helpers are not forwarded by this version.
-It disables project/user customizations, hooks, MCP servers, and permission prompts.
-Read-only phases omit native write tools and deny Bash filesystem writes. Write
-phases allow native edits within the target and sandboxed Bash writes in the target
-and Claude's temporary directory, while explicitly protecting Maintainer's state.
-A missing sandbox fails the run instead of permitting unrestricted commands.
-See [permission boundaries](docs/architecture.md#permission-boundaries) for details.
+The Claude implementation and its unit tests are retained, but it is not offered
+in setup and `--driver claude` / Claude task imports are rejected. Existing Claude
+tasks remain readable in the CLI and dashboard; manual runs, approvals, and due
+scheduled runs fail with a clear inactive-driver message without launching Claude.
+Other Codex tasks still run normally. There is no runtime flag to enable Claude.
 
-If Claude reports authentication failure, check `claude auth status` in the same
-shell/configuration directory. An open app session does not prove that a fresh CLI
-process can use its login. Failed runs preserve both `events.jsonl` and `stderr.log`.
+Reactivation is deferred until a fresh authenticated `claude -p` run and its
+permission boundary can be verified. The retained adapter design is documented in
+[architecture](docs/architecture.md#claude-code-inactive); the Claude example is
+reference material and cannot currently be imported.
 
 ## A task is a Markdown file
 
@@ -162,7 +156,7 @@ action/approval-required results are successful checks with an outstanding decis
 
 ## Current scope
 
-- macOS and Linux; one serial worker per state directory, Codex and Claude Code adapters.
+- macOS and Linux; one serial worker per state directory, one active Codex adapter; Claude code retained but inactive.
 - Local targets; no daemon, database service, remote API, or hosted account.
 - Structured results, crash recovery, scheduling, approval, and optional webhooks.
 - Huh v2 forms, Lip Gloss v2 output, and a Bubble Tea v2 dashboard.
