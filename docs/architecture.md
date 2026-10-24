@@ -55,7 +55,7 @@ records avoid a database dependency; SQLite becomes appropriate if indexing,
 concurrent workers, or an outbox makes cross-record transactions necessary.
 
 The execution lock serializes tasks and approvals within one state directory.
-Its descriptor is inherited by the agent to reduce the chance of overlapping
+Its read-only descriptor is inherited by the agent to reduce the chance of overlapping
 work if the parent process dies. Independent state directories do not coordinate.
 Do not point them at the same target. Read-only listing does not acquire the lock.
 
@@ -69,11 +69,14 @@ so long or failed jobs cannot produce a retry storm. Intervals are completion-ba
 
 The worker is serial: a slow task delays later tasks. Overlapping ticks exit
 quietly. A paused task does not run; a pending approval blocks fresh inspections.
-Malformed definitions stop a tick so configuration errors are visible.
+Malformed task files and unreadable run directories are skipped with a warning
+on stderr; dotfiles are ignored. Other tasks keep running.
 
 Each dispatch records `running` before starting the subprocess. Completion records
 a validated outcome; the process exit code alone is insufficient. Timeouts and
-SIGINT/SIGTERM cancellation kill the process group. On the next locked operation,
+SIGINT/SIGTERM cancellation kill the process group; the Codex driver also kills it
+after a normal exit, so leftover background processes cannot keep holding the lock.
+A preflight failure, such as a missing target, is recorded as a failed run. On the next locked operation,
 orphaned `running` records become `interrupted`. A hard kill or power loss may
 interrupt multiple-file bookkeeping; run metadata is the audit source of truth.
 Detached grandchildren are outside process-group cleanup guarantees. Agents are

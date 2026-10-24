@@ -116,6 +116,7 @@ func cli(ctx context.Context, args []string) error {
 		if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
 			return fmt.Errorf("dashboard requires a terminal; use maintain --json status for scripts")
 		}
+		store.Warn = io.Discard // stderr output would corrupt the full-screen view
 		return dashboard.Run(ctx, store, engine)
 	case "add":
 		return add(store, args, *asJSON)

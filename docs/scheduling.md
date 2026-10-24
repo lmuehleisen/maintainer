@@ -8,6 +8,19 @@ Use absolute executable paths. Scheduler environments often omit your interactiv
 PATH; Codex and tools such as Git must be available there. Confirm `maintain run`
 works in that environment before relying on the schedule.
 
+Scheduler environments also omit variables set in your shell profile:
+
+- **State directory.** Without `--home`, the state directory comes from
+  `MAINTAINER_HOME`, then `XDG_STATE_HOME`, then `~/.local/state/maintainer`. If
+  either variable is set only in your profile, the scheduled `tick` reads a
+  different, empty directory and silently does nothing. The examples pass
+  `--home` explicitly; use the directory your interactive commands use.
+- **Webhook.** A task's `webhook_env` variable is read when the run finishes. Set
+  it in the scheduler too, or every non-healthy run records an unset-variable
+  notification error. The URL is a secret, so keep the file holding it mode 0600.
+- **Codex.** The standalone Codex installer links `codex` into `~/.local/bin`;
+  the examples include it in PATH.
+
 ## macOS: launchd
 
 Copy this to `~/Library/LaunchAgents/com.maintainer.tick.plist`, replacing `/Users/YOU`
@@ -20,19 +33,26 @@ directory; `command -v codex` locates Codex. XML-escape special characters in pa
 <plist version="1.0"><dict>
   <key>Label</key><string>com.maintainer.tick</string>
   <key>ProgramArguments</key><array>
-    <string>/Users/YOU/go/bin/maintain</string><string>tick</string>
+    <string>/Users/YOU/go/bin/maintain</string>
+    <string>--home</string><string>/Users/YOU/.local/state/maintainer</string>
+    <string>tick</string>
   </array>
   <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
   <key>EnvironmentVariables</key><dict>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>MAINTAINER_WEBHOOK</key><string>https://hooks.example.com/YOUR-SECRET</string>
   </dict>
   <key>StandardOutPath</key><string>/Users/YOU/Library/Logs/maintainer.log</string>
   <key>StandardErrorPath</key><string>/Users/YOU/Library/Logs/maintainer-error.log</string>
 </dict></plist>
 ```
 
+Omit `MAINTAINER_WEBHOOK` if no task sets `webhook_env`; otherwise the plist holds
+a secret, so restrict it before loading:
+
 ```sh
+chmod 600 ~/Library/LaunchAgents/com.maintainer.tick.plist
 plutil -lint ~/Library/LaunchAgents/com.maintainer.tick.plist
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.maintainer.tick.plist
 launchctl print "gui/$(id -u)/com.maintainer.tick"
@@ -54,10 +74,15 @@ Description=Run due maintenance responsibilities
 
 [Service]
 Type=oneshot
-ExecStart=%h/go/bin/maintain tick
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/go/bin/maintain --home %h/.local/state/maintainer tick
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/maintainer/env
 TimeoutStartSec=infinity
 ```
+
+If a task sets `webhook_env`, put the variable in `~/.config/maintainer/env`
+(for example `MAINTAINER_WEBHOOK=https://hooks.example.com/YOUR-SECRET`) and
+`chmod 600` it; the leading `-` lets the service start when the file is absent.
 
 And `~/.config/systemd/user/maintainer.timer`:
 
@@ -88,11 +113,14 @@ run the service under a dedicated ordinary user.
 
 ## Cron
 
-Run once a minute, using your actual absolute paths and the PATH containing Codex:
+Run once a minute, using your actual absolute paths and the PATH containing Codex.
+If a task sets `webhook_env`, add the variable too; `crontab` keeps the table
+readable only by you.
 
 ```cron
-PATH=/usr/local/bin:/usr/bin:/bin
-* * * * * /home/YOU/go/bin/maintain tick >> /home/YOU/maintainer.log 2>&1
+PATH=/home/YOU/.local/bin:/usr/local/bin:/usr/bin:/bin
+MAINTAINER_WEBHOOK=https://hooks.example.com/YOUR-SECRET
+* * * * * /home/YOU/go/bin/maintain --home /home/YOU/.local/state/maintainer tick >> /home/YOU/maintainer.log 2>&1
 ```
 
 Inspect `maintain status` regularly during the initial trial. A stopped scheduler

@@ -97,7 +97,18 @@ func (t Task) Validate() error {
 	return err
 }
 
-func ParseSchedule(spec string) (cron.Schedule, error) {
+func ParseSchedule(spec string) (s cron.Schedule, err error) {
+	// robfig/cron v3.0.1 panics on a timezone prefix without a following space.
+	for _, p := range []string{"CRON_TZ=", "TZ="} {
+		if strings.HasPrefix(spec, p) && !strings.Contains(spec, " ") {
+			return nil, fmt.Errorf("schedule: %s must be followed by a cron expression", p)
+		}
+	}
+	defer func() {
+		if v := recover(); v != nil {
+			s, err = nil, fmt.Errorf("schedule: invalid expression %q", spec)
+		}
+	}()
 	if strings.HasPrefix(spec, "@every ") {
 		d, err := time.ParseDuration(strings.TrimPrefix(spec, "@every "))
 		if err != nil || d < time.Minute {
@@ -105,7 +116,7 @@ func ParseSchedule(spec string) (cron.Schedule, error) {
 		}
 	}
 	p := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
-	s, err := p.Parse(spec)
+	s, err = p.Parse(spec)
 	if err != nil {
 		return nil, fmt.Errorf("schedule: %w", err)
 	}

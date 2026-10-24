@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -41,7 +43,18 @@ type TaskState struct {
 	LastSuccess time.Time `json:"last_success,omitempty"`
 }
 
-type Store struct{ Root string }
+type Store struct {
+	Root string
+	Warn io.Writer // receives skipped-entry warnings; nil means stderr
+}
+
+func (s *Store) warn(format string, args ...any) {
+	w := s.Warn
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "maintain: warning: "+format+"\n", args...)
+}
 
 func Open(root string) (*Store, error) {
 	root, err := filepath.Abs(root)
@@ -57,9 +70,10 @@ func Open(root string) (*Store, error) {
 }
 
 // Lock is held throughout a run, serializing all work in one state directory.
-// Passing this descriptor to the agent also prevents overlap after parent death.
+// Passing this descriptor to the agent also prevents overlap after parent death;
+// it is read-only so the agent gains no write access to the state directory.
 func (s *Store) Lock() (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(s.Root, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := os.OpenFile(filepath.Join(s.Root, "lock"), os.O_CREATE|os.O_RDONLY, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -148,12 +162,13 @@ func (s *Store) Tasks() ([]Task, error) {
 	}
 	tasks := []Task{}
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".md" || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		t, err := s.Task(e.Name()[:len(e.Name())-3])
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", e.Name(), err)
+			s.warn("skipping tasks/%s: %v", e.Name(), err)
+			continue
 		}
 		tasks = append(tasks, t)
 	}
@@ -192,12 +207,13 @@ func (s *Store) Runs(task string) ([]Run, error) {
 	}
 	runs := []Run{}
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		r, err := s.Run(e.Name())
 		if err != nil {
-			return nil, err
+			s.warn("skipping runs/%s: %v", e.Name(), err)
+			continue
 		}
 		if task == "" || task == r.Task {
 			runs = append(runs, r)
