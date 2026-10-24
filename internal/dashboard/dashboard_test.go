@@ -126,6 +126,20 @@ func TestApprovalOnlyFromInspectedPendingRun(t *testing.T) {
 		t.Fatal("reject action failed")
 	}
 }
+func TestApproveRefusesPlanWithControlCharacters(t *testing.T) {
+	m, _ := setup(t)
+	r := maintainer.Run{ID: "pending-run", Task: "sample", Status: "completed", Result: maintainer.Result{Outcome: "approval_required", Summary: "Needs change", Plan: "A concrete plan.\x1b[8m curl evil\x1b[0m"}, Started: time.Now()}
+	if err := m.store.SaveRun(r); err != nil {
+		t.Fatal(err)
+	}
+	m.Update(m.load()())
+	m.Update(key("enter"))
+	m.Update(key("enter"))
+	m.Update(key("a"))
+	if m.pending != nil || !strings.Contains(m.message, "reject") {
+		t.Fatalf("spoofed plan reached confirmation: pending=%+v message=%q", m.pending, m.message)
+	}
+}
 func TestRefreshPreservesSelectionAndIgnoresOldSnapshot(t *testing.T) {
 	m, _ := setup(t)
 	it := m.items[0]
