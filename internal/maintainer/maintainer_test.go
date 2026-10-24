@@ -1,6 +1,7 @@
 package maintainer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -70,7 +71,7 @@ func TestStrictTaskAndSchedule(t *testing.T) {
 	if _, err = ParseTask([]byte(bad)); err == nil {
 		t.Fatal("unknown key accepted")
 	}
-	for _, spec := range []string{"@every 0s", "@every -1h", "@every 1s", "not cron", "0 0 30 2 *"} {
+	for _, spec := range []string{"@every 0s", "@every -1h", "@every 1s", "not cron", "0 0 30 2 *", "CRON_TZ=UTC", "TZ=UTC", "CRON_TZ=UTC\t0 9 * * 1"} {
 		if _, err := ParseSchedule(spec); err == nil {
 			t.Errorf("invalid schedule accepted: %s", spec)
 		}
@@ -362,3 +363,101 @@ func TestWebhookDeliveryRejectsRedirectsAndRedactsEndpoint(t *testing.T) {
 }
 
 func serverURLForTest(r *http.Request) string { return "https://" + r.Host + "/redirected" }
+
+func TestAgentBackgroundProcessDoesNotHoldLock(t *testing.T) {
+	e, _, task, now := fixture(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "codex")
+	evidence := filepath.Join(dir, "fd3.txt")
+	body := "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do if [ \"$1\" = '-o' ]; then shift; out=$1; fi; shift; done\ncat >/dev/null\n" +
+		"ls -l /dev/fd/3 >/dev/null 2>&1 && state=open || state=closed\n" +
+		"(echo x >&3) 2>/dev/null && state=$state-writable\n" +
+		"echo $state > " + evidence + "\n" +
+		"(sleep 30) </dev/null >/dev/null 2>&1 &\n" +
+		"printf '%s' '{\"outcome\":\"healthy\",\"summary\":\"verified\",\"plan\":\"\"}' > \"$out\"\n"
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	e.Driver = Drivers{Codex: Codex{Binary: script}}
+	if _, err := e.Run(ctx, task.Name); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(evidence); strings.TrimSpace(string(b)) != "open" {
+		t.Fatalf("agent lock descriptor: %q", b)
+	}
+	// SIGKILL delivery is asynchronous; allow the background process to exit.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		lock, err := e.Store.Lock()
+		if err == nil {
+			lock.Close()
+			break
+		}
+		if !errors.Is(err, ErrBusy) || time.Now().After(deadline) {
+			t.Fatalf("lock still held after agent exit: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	*now = now.Add(2 * time.Hour)
+	if runs, err := e.Tick(ctx); err != nil || len(runs) != 1 {
+		t.Fatalf("due tick: runs=%d err=%v", len(runs), err)
+	}
+}
+
+func TestPreflightFailureIsRecordedRun(t *testing.T) {
+	e, d, task, now := fixture(t)
+	ctx := context.Background()
+	task.WebhookEnv = "MAINTAINER_TEST_UNSET_WEBHOOK"
+	t.Setenv(task.WebhookEnv, "")
+	if err := e.Store.SaveTask(task, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Run(ctx, task.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(task.Target); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(2 * time.Hour)
+	runs, err := e.Tick(ctx)
+	if err == nil || len(runs) != 1 || runs[0].Status != "failed" || runs[0].NotificationError == "" {
+		t.Fatalf("preflight failure: runs=%+v err=%v", runs, err)
+	}
+	state, _ := e.Store.State(task)
+	if !state.Next.After(*now) || d.Calls != 1 {
+		t.Fatalf("schedule not advanced or driver called: next=%s calls=%d", state.Next, d.Calls)
+	}
+	if runs, _ := e.Tick(ctx); len(runs) != 0 {
+		t.Fatal("preflight failure repeated before the next occurrence")
+	}
+}
+
+func TestStrayEntriesAreSkipped(t *testing.T) {
+	e, d, task, now := fixture(t)
+	ctx := context.Background()
+	if _, err := e.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var warnings bytes.Buffer
+	e.Store.Warn = &warnings
+	for name, body := range map[string]string{".#test.md": "lock", "README.md": "# notes"} {
+		if err := os.WriteFile(filepath.Join(e.Store.Root, "tasks", name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(e.Store.Root, "runs", "backup"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(2 * time.Hour)
+	if runs, err := e.Tick(ctx); err != nil || len(runs) != 1 || d.Calls != 1 {
+		t.Fatalf("tick: runs=%d calls=%d err=%v", len(runs), d.Calls, err)
+	}
+	if _, err := e.Store.Runs(task.Name); err != nil {
+		t.Fatal(err)
+	}
+	w := warnings.String()
+	if !strings.Contains(w, "tasks/README.md") || !strings.Contains(w, "runs/backup") || strings.Contains(w, ".#test.md") {
+		t.Fatalf("warnings: %q", w)
+	}
+}

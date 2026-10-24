@@ -168,7 +168,12 @@ func (d Codex) Execute(ctx context.Context, req Request) (Result, error) {
 	}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 2 * time.Second
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	// Background processes left by the agent would keep the inherited lock held.
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if err != nil {
 		return result, fmt.Errorf("codex failed (see stderr.log): %w", err)
 	}
 	b, err := os.ReadFile(filepath.Join(req.Dir, "result.json"))

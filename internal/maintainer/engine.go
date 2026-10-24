@@ -117,9 +117,6 @@ func (e *Engine) Reject(id string) error {
 
 func (e *Engine) execute(ctx context.Context, t Task, approved *Run, lock *os.File) (Run, error) {
 	var r Run
-	if err := t.CheckTarget(e.Store.Root); err != nil {
-		return r, err
-	}
 	nonce := make([]byte, 6)
 	if _, err := rand.Read(nonce); err != nil {
 		return r, err
@@ -169,7 +166,12 @@ func (e *Engine) execute(ctx context.Context, t Task, approved *Run, lock *os.Fi
 	if driver == nil {
 		driver = Drivers{}
 	}
-	result, runErr := driver.Execute(runCtx, req)
+	// Preflight failures are recorded, scheduled, and notified like any failed run.
+	var result Result
+	runErr := t.CheckTarget(e.Store.Root)
+	if runErr == nil {
+		result, runErr = driver.Execute(runCtx, req)
+	}
 	if runErr == nil {
 		runErr = ValidateResult(result, req)
 	}
