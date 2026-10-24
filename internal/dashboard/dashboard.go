@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -252,6 +251,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.message = "Open a pending run with Enter to review its plan first."
 					return m, nil
 				}
+				if key == "a" {
+					if err := maintainer.UnsafePlan(*r); err != nil {
+						m.message = err.Error()
+						return m, nil
+					}
+				}
 				kind, label := "approve", "Execute this reviewed plan with write authority?"
 				if key == "x" {
 					kind = "reject"
@@ -362,21 +367,8 @@ func badge(s string) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(strings.ReplaceAll(s, "_", " "))
 }
 
-// Agent output is data, never terminal control sequences (including OSC links
-// and clipboard writes). Preserve text, newlines, and tabs only.
-func clean(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' {
-			return r
-		}
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, ansi.Strip(s))
-}
 func short(s string, width int) string {
-	return ansi.Truncate(strings.ReplaceAll(clean(s), "\n", " "), max(1, width), "…")
+	return ansi.Truncate(strings.ReplaceAll(maintainer.TerminalSafe(s), "\n", " "), max(1, width), "…")
 }
 func date(t time.Time) string {
 	if t.IsZero() {
@@ -490,15 +482,15 @@ func (m *model) tasksView(height int) string {
 		}
 	}
 	width := m.width - listWidth - 1
-	detail := titleStyle.Render(clean(it.Task.Name)) + "\n" + badge(taskStatus(*it)) + "\n\n" +
-		fmt.Sprintf("Agent      %s\nAuthority  %s\nNext       %s\nLast good  %s\nSchedule   %s\nTarget     %s\n", it.Task.Driver, it.Task.Authority, next, date(it.State.LastSuccess), clean(it.Task.Schedule), clean(it.Task.Target))
+	detail := titleStyle.Render(maintainer.TerminalSafe(it.Task.Name)) + "\n" + badge(taskStatus(*it)) + "\n\n" +
+		fmt.Sprintf("Agent      %s\nAuthority  %s\nNext       %s\nLast good  %s\nSchedule   %s\nTarget     %s\n", it.Task.Driver, it.Task.Authority, next, date(it.State.LastSuccess), maintainer.TerminalSafe(it.Task.Schedule), maintainer.TerminalSafe(it.Task.Target))
 	if len(it.Runs) > 0 {
-		detail += "\n" + clean(it.Runs[0].Result.Summary)
+		detail += "\n" + maintainer.TerminalSafe(it.Runs[0].Result.Summary)
 		if it.Runs[0].NotificationError != "" {
-			detail += "\nNotification: " + clean(it.Runs[0].NotificationError)
+			detail += "\nNotification: " + maintainer.TerminalSafe(it.Runs[0].NotificationError)
 		}
 	} else {
-		detail += "\n" + clean(it.Task.Objective)
+		detail += "\n" + maintainer.TerminalSafe(it.Task.Objective)
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, list, " ", box(ansi.Wrap(detail, width-4, ""), width, height))
 }
@@ -507,7 +499,7 @@ func (m *model) historyView(height int) string {
 	if it == nil {
 		return ""
 	}
-	rows := []string{titleStyle.Render(clean(it.Task.Name)) + muted.Render(" / run history"), ""}
+	rows := []string{titleStyle.Render(maintainer.TerminalSafe(it.Task.Name)) + muted.Render(" / run history"), ""}
 	visible := max(1, height-5)
 	start := max(0, m.runIndex-visible+1)
 	for i := start; i < len(it.Runs) && i < start+visible; i++ {
@@ -541,7 +533,7 @@ func (m *model) runView(height int) string {
 		text += "\n\nNotification: " + r.NotificationError
 	}
 	text += "\n\nArtifacts: " + m.store.RunDir(r.ID)
-	lines := strings.Split(ansi.Wrap(clean(text), m.width-4, ""), "\n")
+	lines := strings.Split(ansi.Wrap(maintainer.TerminalSafe(text), m.width-4, ""), "\n")
 	visible := max(1, height-2)
 	start := min(m.scroll, max(0, len(lines)-visible))
 	end := min(len(lines), start+visible)

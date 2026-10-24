@@ -307,7 +307,7 @@ func cli(ctx context.Context, args []string) error {
 		}
 		printRun(r, false)
 		if r.Result.Plan != "" {
-			fmt.Printf("\nPlan:\n%s\n", r.Result.Plan)
+			fmt.Printf("\nPlan:\n%s\n", maintainer.TerminalSafe(r.Result.Plan))
 		}
 		fmt.Println("\nArtifacts:", store.RunDir(id))
 		return nil
@@ -325,8 +325,11 @@ func cli(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		if err := maintainer.UnsafePlan(previous); err != nil {
+			return err
+		}
 		if !*yes {
-			fmt.Printf("Plan for %s:\n%s\n\n", previous.Task, previous.Result.Plan)
+			fmt.Printf("Plan for %s:\n%s\n\n", maintainer.TerminalSafe(previous.Task), maintainer.TerminalSafe(previous.Result.Plan))
 			if !terminal() {
 				return fmt.Errorf("review with inspect, then use approve --yes RUN in noninteractive mode")
 			}
@@ -391,9 +394,9 @@ func printRun(r maintainer.Run, asJSON bool) {
 	if outcome == "" {
 		outcome = r.Status
 	}
-	fmt.Printf("%s  %s  %s\n  %s\n", r.ID, r.Task, outcome, r.Result.Summary)
+	fmt.Printf("%s  %s  %s\n  %s\n", r.ID, maintainer.TerminalSafe(r.Task), maintainer.TerminalSafe(outcome), maintainer.TerminalSafe(r.Result.Summary))
 	if r.NotificationError != "" {
-		fmt.Println("  Notification:", r.NotificationError)
+		fmt.Println("  Notification:", maintainer.TerminalSafe(r.NotificationError))
 	}
 }
 

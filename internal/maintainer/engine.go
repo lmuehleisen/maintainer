@@ -75,6 +75,9 @@ func (e *Engine) Approve(ctx context.Context, id string) (Run, error) {
 		if previous.Status != "completed" || previous.Result.Outcome != "approval_required" || previous.ConsumedBy != "" || previous.Rejected {
 			return fmt.Errorf("run is not awaiting approval")
 		}
+		if err := UnsafePlan(previous); err != nil {
+			return err
+		}
 		task, err := e.Store.Task(previous.Task)
 		if err != nil {
 			return err
